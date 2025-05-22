@@ -38,15 +38,67 @@ matplot(t, matriz, type = "l", lty = 1, lwd = 2,
 legend("topright", legend = paste("Camino", 1:caminos), col = rainbow(caminos), lty = 1, lwd = 2)
 #------------------------------------------------------------------------------#
 #b)1
+#en millones
+monto=100
+tasacupon=0.04
+f=2 #frecuencia
+cupon=monto*tasacupon/f
+pagos=monto*f*(exp(r_0/f)-1)/(1-exp(-r_0*20))
 df1<-data.frame(semestre=t)
-df1<-df1 %>%
+#Lista: tasasimulada[CHEK], saldo capital, VPflujosfuturopension [CHEK],duracionpensión[chek],
+#precio_bono_c[CHEKC], Duración_bono_cupon[CHEK], prop_bonos,
+precio_bono_expr <- function(tas, semestre) {
+  tiempos <- seq(semestre + 0.5, 25, by = 0.5)
+  cupones <- cupon * sum(exp(-tas * (25 - tiempos)))
+  nominal <- 100 * exp(-tas * (25 - semestre))
+  return(cupones + nominal)
+}
+df1 <- df1 %>%
   mutate(
-    tasa_s1=matriz[,1],
-    saldo_capital=a,
-    VP_pagos=a,
-    duration=a,
-    P_bonosc=a,
-    
+    tasa_s1 = matriz[,1],
+    VP_flujos_pension = pagos * (1 - exp(-tasa_s1 * (20 - semestre))) / (f * (exp(tasa_s1 / f) - 1)),
+    Duracion_pension = (1 / f) * (
+      (exp(tasa_s1 / f) / (exp(tasa_s1 / f) - 1)) -
+        ((exp(-tasa_s1 * (20 - semestre)) * ((20 - semestre) * f)) / (1 - exp(-tasa_s1 * (20 - semestre))))),
+    Precio_bono = mapply(precio_bono_expr, tasa_s1, semestre)
   )
+#tengo que hacer una funcion igual para la duracion
+duracion_bono <- function(tasa, semestre, cupon = 2, FV = 100, vencimiento = 25) {
+  tiempos <- seq(semestre + 0.5, vencimiento, by = 0.5)
+  flujos <- rep(cupon, length(tiempos))
+  flujos[length(flujos)] <- flujos[length(flujos)] + FV  # último flujo incluye el nominal
+  
+  # Valor presente de cada flujo
+  vp_flujos <- flujos * exp(-tasa * (tiempos - semestre))
+  
+  # Numerador: t * VP
+  numerador <- sum((tiempos - semestre) * vp_flujos)
+  
+  # Denominador: precio del bono
+  precio <- sum(vp_flujos)
+  
+  return(numerador / precio)
+}
+df1 <- df1 %>%
+  mutate(
+    Duracion_bono = mapply(duracion_bono, tasa_s1, semestre)
+  )
+
+#cupon*sum(exp(-tasa_s1*(25-seq(semestre,25,by=0.5))))
    
 
+#------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------#
+#PARTE 2 MODELO DE FACTORES
+#------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------#
+BCP <- read_excel("RENTA-FIJA/T2/Datos Tarea 2.xlsx", 
+                            sheet = "BCP")
+BCU <- read_excel("RENTA-FIJA/T2/Datos Tarea 2.xlsx", 
+                            sheet = "BCU")
+USD <- read_excel("RENTA-FIJA/T2/Datos Tarea 2.xlsx", 
+                            sheet = "USD")
+DESEMPLEO <- read_excel("RENTA-FIJA/T2/Datos Tarea 2.xlsx", 
+                            sheet = "Desempleo")
+COBRE <- read_excel("RENTA-FIJA/T2/Datos Tarea 2.xlsx", 
+                            sheet = "Cobre")
