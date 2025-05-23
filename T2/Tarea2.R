@@ -5,6 +5,7 @@ library(dplyr)
 library(lubridate)
 library(ggplot2)
 library(xtable)
+library(purrr)
 #------------------------------------------------------------------------------#
 #PREGUNTA 1 simulacion
 #a) Primero declaramos variables
@@ -18,6 +19,7 @@ r_0=0.039695
 set.seed(666)#semilla para que no me cambien los graficos a cada rato
 caminos=5
 tiempo=20/0.5
+
 matriz<-matrix(0,nrow=tiempo+1,ncol=caminos)
 for (i in 1:caminos) {
   #coore del 1 al 5
@@ -31,11 +33,11 @@ for (i in 1:caminos) {
   }
 }
 t<-seq(0,20,by=0.5)
-matplot(t, matriz, type = "l", lty = 1, lwd = 2,
+matplot(t, round(100*matriz,2), type = "l", lty = 1, lwd = 2,
         col = rainbow(caminos),
         xlab = "Tiempo (años)", ylab = "Tasa",
-        main = "Simulación de Caminos Estocásticos para la Tasa de Interés")
-legend("topright", legend = paste("Camino", 1:caminos), col = rainbow(caminos), lty = 1, lwd = 2)
+        main = "Diferentes caminos para la tasa de interés")
+legend("topright", legend = paste("Camino", 1:caminos), col = rainbow(caminos), lty = 1, lwd = 2, cex=0.5)
 #------------------------------------------------------------------------------#
 #b)1
 #en millones
@@ -47,42 +49,63 @@ pagos=monto*f*(exp(r_0/f)-1)/(1-exp(-r_0*20))
 df1<-data.frame(semestre=t)
 #Lista: tasasimulada[CHEK], saldo capital, VPflujosfuturopension [CHEK],duracionpensión[chek],
 #precio_bono_c[CHEKC], Duración_bono_cupon[CHEK], prop_bonos,
-precio_bono_expr <- function(tas, semestre) {
+precio_bono_expr <- function(tasa, semestre) {
   tiempos <- seq(semestre + 0.5, 25, by = 0.5)
-  cupones <- cupon * sum(exp(-tas * (25 - tiempos)))
-  nominal <- 100 * exp(-tas * (25 - semestre))
+  cupones <- cupon * sum(exp(-tasa * (tiempos - semestre)))  # descuentos relativos al semestre actual
+  nominal <- 100 * exp(-tasa * (25 - semestre))
   return(cupones + nominal)
 }
+
 df1 <- df1 %>%
   mutate(
     tasa_s1 = matriz[,1],
-    VP_flujos_pension = pagos * (1 - exp(-tasa_s1 * (20 - semestre))) / (f * (exp(tasa_s1 / f) - 1)),
+    VP_flujos_pension = pagos * (1 - exp(-tasa_s1 * (20 - semestre))) / 
+      (f * (exp(tasa_s1 / f) - 1)),
     Duracion_pension = (1 / f) * (
       (exp(tasa_s1 / f) / (exp(tasa_s1 / f) - 1)) -
-        ((exp(-tasa_s1 * (20 - semestre)) * ((20 - semestre) * f)) / (1 - exp(-tasa_s1 * (20 - semestre))))),
+        ((exp(-tasa_s1 * (20 - semestre)) * ((20 - semestre) * f)) / 
+           (1 - exp(-tasa_s1 * (20 - semestre))))
+    ),
+    Duracion_pension = ifelse(semestre == 20, 0, Duracion_pension),
     Precio_bono = mapply(precio_bono_expr, tasa_s1, semestre)
   )
 #tengo que hacer una funcion igual para la duracion
-duracion_bono <- function(tasa, semestre, cupon = 2, FV = 100, vencimiento = 25) {
-  tiempos <- seq(semestre + 0.5, vencimiento, by = 0.5)
-  flujos <- rep(cupon, length(tiempos))
-  flujos[length(flujos)] <- flujos[length(flujos)] + FV  # último flujo incluye el nominal
-  
-  # Valor presente de cada flujo
-  vp_flujos <- flujos * exp(-tasa * (tiempos - semestre))
-  
-  # Numerador: t * VP
-  numerador <- sum((tiempos - semestre) * vp_flujos)
-  
-  # Denominador: precio del bono
-  precio <- sum(vp_flujos)
-  
-  return(numerador / precio)
+duracion_bono_expr <- function(r, s) {
+  tiempos <- seq(s + 0.5, 25, by = 0.5)
+  flujos <- rep(2, length(tiempos))
+  flujos[length(flujos)] <- flujos[length(flujos)] + 100  # último flujo incluye nominal
+  vp <- flujos * exp(-r * (tiempos - s))  # descontar desde el semestre actual (t = 0)
+  duracion <- sum((tiempos - s) * vp) / sum(vp)
+  return(duracion)
 }
+
+df1 <- df1 %>%
+  mutate(Duracion_bono = mapply(duracion_bono_expr, tasa_s1, semestre),
+         X_t=round((Duracion_pension-0.5)/(Duracion_bono-0.5),4),#duraicion del deposito es siempre 0.
+         intereses=100*(1-X_t)*tasa_s1*0.5,
+         cupones=2*X_t,
+         intereses = lag(intereses, default = 0),
+         cupones = lag(cupones, default = 0)
+    )
+
 df1 <- df1 %>%
   mutate(
-    Duracion_bono = mapply(duracion_bono, tasa_s1, semestre)
+    pago = pagos
+  ) %>%
+  arrange(semestre) %>%
+  mutate(
+    saldo_capital = accumulate2(
+      .x = pago,
+      .y = tasa_s1,
+      .init = 100,  # capital inicial
+      .f = function(saldo_anterior, pago, tasa) {
+        nuevo_saldo <- (saldo_anterior - pago) * exp(tasa * 0.5)
+        return(nuevo_saldo)
+      }
+    )[-1]  # remover el valor inicial que es solo para partir
   )
+
+
 
 #cupon*sum(exp(-tasa_s1*(25-seq(semestre,25,by=0.5))))
    
@@ -227,7 +250,7 @@ plot(DESEMPLEO$fecha, as.numeric(DESEMPLEO$valor), type = "l", col = "darkgreen"
      xlab = "Fecha", ylab = "Desempleo (%)", main = "Tasa de Desempleo")
 
 # Cobre
-plot(COBRE$fecha, as.numeric(COBRE$cobre), type = "l", col = "darkred", lwd = 2,
+plot(COBRE$observation_date, as.numeric(COBRE$cobre), type = "l", col = "darkred", lwd = 2,
      xlab = "Fecha", ylab = "USD", main = "Precio del Cobre")
 
 #
